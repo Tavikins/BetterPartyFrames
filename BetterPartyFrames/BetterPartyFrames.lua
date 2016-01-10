@@ -53,28 +53,28 @@ local ktSmallInvitePathIcons = -- NOTE: ID's are zero-indexed in CPP
 
 local ktInviteClassIcons =
 {
-	[GameLib.CodeEnumClass.Warrior] 			= { ["DPS"] = "IconSprites:Icon_RunesWarrior_Icon_Rune_Set_Warrior_Fire",
+	[GameLib.CodeEnumClass.Warrior] 			= { ["Assault"] = "IconSprites:Icon_RunesWarrior_Icon_Rune_Set_Warrior_Fire",
 													["Support"] = "IconSprites:Icon_RunesWarrior_Icon_Rune_Set_Warrior_Fusion",
 													["None"] = "IconSprites:Icon_RunesWarrior_Icon_Rune_Set_Warrior_Fire",
 												},
-	[GameLib.CodeEnumClass.Engineer] 			= { ["DPS"] = "IconSprites:Icon_RunesEngineer_Icon_Rune_Set_Engineer_Fire",
+	[GameLib.CodeEnumClass.Engineer] 			= { ["Assault"] = "IconSprites:Icon_RunesEngineer_Icon_Rune_Set_Engineer_Fire",
 													["Support"] = "IconSprites:Icon_RunesEngineer_Icon_Rune_Set_Engineer_Fusion",
 													["None"] = "IconSprites:Icon_RunesEngineer_Icon_Rune_Set_Engineer_Earth",
 												},
-	[GameLib.CodeEnumClass.Stalker] 			= { ["DPS"] = "IconSprites:Icon_RunesStalker_Icon_Rune_Set_Stalker_Fire",
+	[GameLib.CodeEnumClass.Stalker] 			= { ["Assault"] = "IconSprites:Icon_RunesStalker_Icon_Rune_Set_Stalker_Fire",
 													["Support"] = "IconSprites:Icon_RunesStalker_Icon_Rune_Set_Stalker_Fusion",
 													["None"] = "IconSprites:Icon_RunesStalker_Icon_Rune_Set_Stalker_Fusion",
 												},
-	[GameLib.CodeEnumClass.Esper]				= { ["DPS"] = "IconSprites:Icon_RunesEsper_Icon_Rune_Set_Esper_Fire",
-													["Support"] = "IconSprites:Icon_RunesEsper_Icon_Rune_Set_Esper_Fusion",
+	[GameLib.CodeEnumClass.Esper]				= { ["Assault"] = "IconSprites:Icon_RunesEsper_Icon_Rune_Set_Esper_Fire",
+													["Support"] = "IconSprites:Icon_RunesEsper_Icon_Rune_Set_Esper_Life",
 													["None"] = "IconSprites:Icon_RunesEsper_Icon_Rune_Set_Esper_Water",
 												},
-	[GameLib.CodeEnumClass.Medic]				= { ["DPS"] = "IconSprites:Icon_RunesMedic_Icon_Rune_Set_Medic_Fire",
-													["Support"] = "IconSprites:Icon_RunesMedic_Icon_Rune_Set_Medic_Fusion",
+	[GameLib.CodeEnumClass.Medic]				= { ["Assault"] = "IconSprites:Icon_RunesMedic_Icon_Rune_Set_Medic_Fire",
+													["Support"] = "IconSprites:Icon_RunesMedic_Icon_Rune_Set_Medic_Life",
 													["None"] = "IconSprites:Icon_RunesMedic_Icon_Rune_Set_Medic_Air",
 												},
-	[GameLib.CodeEnumClass.Spellslinger]	 	= { ["DPS"] = "IconSprites:Icon_RunesSpellslinger_Icon_Rune_Set_Spellslinger_Fire",
-													["Support"] = "IconSprites:Icon_RunesSpellslinger_Icon_Rune_Set_Spellslinger_Fusion",
+	[GameLib.CodeEnumClass.Spellslinger]	 	= { ["Assault"] = "IconSprites:Icon_RunesSpellslinger_Icon_Rune_Set_Spellslinger_Fire",
+													["Support"] = "IconSprites:Icon_RunesSpellslinger_Icon_Rune_Set_Spellslinger_Life",
 													["None"] = "IconSprites:Icon_RunesSpellslinger_Icon_Rune_Set_Spellslinger_Life",
 												},
 }
@@ -476,6 +476,8 @@ function BetterPartyFrames:OnDocumentReady()
 	Apollo.RegisterEventHandler("Group_Remove",				"OnGroupRemove", self)				-- ( name, reason )
 	Apollo.RegisterEventHandler("Group_Left",				"OnGroupLeft", self)				-- ( reason )
 
+	Apollo.RegisterEventHandler("Inspect",					"OnInspect", self)
+	
 	Apollo.RegisterEventHandler("Group_MemberFlagsChanged",	"OnGroupMemberFlags", self)			-- ( nMemberIndex, bIsFromPromotion, tChangedFlags)
 
 	Apollo.RegisterEventHandler("Group_MemberPromoted",		"OnGroupMemberPromoted", self)		-- ( name, bSelf )
@@ -548,6 +550,8 @@ function BetterPartyFrames:OnDocumentReady()
 	end
 
 	self.tGroupWndPortraits 	= {}
+	self.inspected 				= {}
+	self.SavediLevels			= {}
 
 	self.eInstanceDifficulty 	= GroupLib.GetInstanceDifficulty()
 	self.tLootRules	 			= GroupLib.GetLootRules()
@@ -632,7 +636,7 @@ function BetterPartyFrames:LoadPortrait(idx)
 		wndOffline			= wndHud:FindChild("Offline"),
 		wndMark				= wndHud:FindChild("Mark"),
 		wndHealthBG			= wndHud:FindChild("GroupPortraitHealthBG"),
-		wndStats			= wndHud:FindChild("Stats"),
+		wndiLevel			= wndHud:FindChild("iLevel"),
 	}
 
 	self.tGroupWndPortraits[idx].wndHud:Show(false)
@@ -830,7 +834,7 @@ function BetterPartyFrames:PostChangeToChannel(nPrevValue, nNextValue, tDescript
 end
 
 function BetterPartyFrames:OnGroupUpdated()
-	if GroupLib.InRaid() then
+	if GroupLib.InRaid() and self.bDisplayedRaid then
 		return
 	end
 
@@ -934,6 +938,9 @@ function BetterPartyFrames:OnGroupPortraitClick(wndHandler, wndControl, eMouseBu
 	local unitMember = GroupLib.GetUnitForGroupMember(nMemberIdx) --returns nil when the member is out of range among other reasons
 	if nMemberIdx and unitMember then
 		GameLib.SetTargetUnit(unitMember)
+		unitMember:Inspect()
+		self.bInspecting = true
+		
 		
 		if self.settings.RememberPrevTarget then
 			self.PrevTarget = unitMember
@@ -1056,12 +1063,8 @@ function BetterPartyFrames:DrawMemberPortrait(tPortrait, tMemberInfo)
 	local role = "None"
 	local assaultpower = 0
 	local supportpower = 0
+	local iLevelColor = "white"
 	
-	if unitMember then
-		assaultpower = unitMember:GetAssaultPower()
-		supportpower = unitMember:GetSupportPower()
-	end
-		
 	if assaultpower > supportpower then
 		role = "Assault"
 	elseif supportpower > assaultpower then
@@ -1070,23 +1073,20 @@ function BetterPartyFrames:DrawMemberPortrait(tPortrait, tMemberInfo)
 		role = "None"
 	end
 	
-
-	self.tGroupWndPortraits[tPortrait.idx].wndHud:FindChild("GroupPortraitBtn"):SetData({ tPortrait.idx, tMemberInfo.strCharacterName })
-	tPortrait.wndName:SetText(strName)
-	tPortrait.wndLeader:Show(tMemberInfo.bIsLeader)
-	tPortrait.wndClass:Show(tMemberInfo.bIsOnline)
-	tPortrait.wndPathIcon:Show(tMemberInfo.bIsOnline)
-	tPortrait.wndOffline:Show(not tMemberInfo.bIsOnline)
-	tPortrait.wndHud:FindChild("DeadIndicator"):Show(bDead)
-	tPortrait.wndHud:FindChild("GroupPortraitHealthBG"):Show(tMemberInfo.nHealth > 0)
-	tPortrait.wndHud:FindChild("GroupDisabledFrame"):Show(false)
-	tPortrait.wndHud:FindChild("GroupPortraitBtn"):Show(true)
-	tPortrait.wndHud:FindChild("iLevel"):Show(tMemberInfo.bIsOnline)
+	local iLevel = 0
 	
-	local iLevel = unitMember and unitMember:GetEffectiveItemLevel() or 0
-	tPortrait.wndHud:FindChild("iLevel"):SetText("i"..strRound(iLevel))
+	if unitMember then
+	 	iLevel = unitMember:GetEffectiveItemLevel()
+		if iLevel == nil or iLevel == 0 then
+			iLevel = self.SavediLevels[tMemberInfo.strCharacterName]
+		elseif iLevel ~= nil and iLevel ~= 0 then
+			self.SavediLevels[tMemberInfo.strCharacterName] = iLevel
+		end
+		assaultpower = unitMember:GetAssaultPower()
+		supportpower = unitMember:GetSupportPower()	
+	end
+	if iLevel == nil then iLevel = 0 end
 	
-	local iLevelColor = "white"
 	if iLevel >= 116 then
 		iLevelColor = "ItemQuality_Artifact"
 	elseif iLevel >= 100 then
@@ -1103,8 +1103,21 @@ function BetterPartyFrames:DrawMemberPortrait(tPortrait, tMemberInfo)
 		iLevelColor = "ItemQuality_Inferior"
 	end
 	
-	tPortrait.wndHud:FindChild("iLevel"):SetTextColor(iLevelColor)
-		
+	tPortrait.wndiLevel:SetTextColor(iLevelColor)
+	tPortrait.wndiLevel:SetText("i"..strRound(iLevel))
+	self.tGroupWndPortraits[tPortrait.idx].wndHud:FindChild("GroupPortraitBtn"):SetData({ tPortrait.idx, tMemberInfo.strCharacterName })
+	tPortrait.wndName:SetText(strName)
+	tPortrait.wndLeader:Show(tMemberInfo.bIsLeader)
+	tPortrait.wndClass:Show(tMemberInfo.bIsOnline)
+	tPortrait.wndPathIcon:Show(tMemberInfo.bIsOnline)
+	tPortrait.wndOffline:Show(not tMemberInfo.bIsOnline)
+	tPortrait.wndHud:FindChild("DeadIndicator"):Show(bDead)
+	tPortrait.wndHud:FindChild("GroupPortraitHealthBG"):Show(tMemberInfo.nHealth > 0)
+	tPortrait.wndHud:FindChild("GroupDisabledFrame"):Show(false)
+	tPortrait.wndHud:FindChild("GroupPortraitBtn"):Show(true)
+	tPortrait.wndiLevel:Show(tMemberInfo.bIsOnline)
+	
+	self:CloseInspectWindow()
 	
 	local unitTarget = GameLib.GetTargetUnit()
 	tPortrait.wndHud:FindChild("GroupPortraitBtn"):SetCheck(unitTarget and unitTarget == unitMember) --tPortrait.unitMember
@@ -1147,6 +1160,14 @@ function BetterPartyFrames:DrawMemberPortrait(tPortrait, tMemberInfo)
 	tPortrait.wndMark:Show(tMemberInfo.nMarkerId ~= 0)
 	if tMemberInfo.nMarkerId ~= 0 then
 		tPortrait.wndMark:SetSprite(kstrRaidMarkerToSprite[tMemberInfo.nMarkerId])
+	end
+end
+
+function BetterPartyFrames:CloseInspectWindow()
+	local charaddon = Apollo.GetAddon("Character")
+	if self.bInspecting and charaddon.wndInspect then
+		charaddon.wndInspect:Destroy()
+		self.bInspecting = false
 	end
 end
 
